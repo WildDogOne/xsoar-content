@@ -29,6 +29,7 @@ from MicrosoftDefenderAdvancedThreatProtection import (
     put_live_response_file_action,
     run_live_response_script_action,
     run_polling_command,
+    process_ancestry_command,
     stop_and_quarantine_file_command_polling,
 )
 
@@ -373,6 +374,15 @@ def test_check_limit_and_offset_values_limit_zero(mocker):
 
 
 """ API RAW RESULTS """
+
+ADVANCED_HUNTING_ANCESTRY_RESPONSE = {
+    "InitiatingProcessFileName": "explorer.exe",
+    "InitiatingProcessId": "10996",
+    "InitiatingProcessCommandLine": "Explorer.EXE",
+    "InitiatingProcessParentFileName": "userinit.exe",
+    "InitiatingProcessParentId": "10352",
+    "InitiatingProcessCreationTime": "23 Jul 2025 15:33:16",
+}
 
 FILE_DATA_API_RESPONSE = {
     "sha1": "123abc",
@@ -3797,6 +3807,22 @@ def test_list_auth_permissions_command(mocker):
     command_results = list_auth_permissions_command(client_mocker)
 
     assert command_results.readable_output == "### Permissions\nEvent.Write\nUser.Read"
+
+
+def test_process_ancestry_command(mocker):
+    """
+    Tests conversion of alert response
+
+    Given:
+        - alert response as json
+    When:
+        - calling for machine alerts
+    Then:
+        - return alert data dict
+    """
+    mocker.patch.object(client_mocker, "get_advanced_hunting", return_value=ADVANCED_HUNTING_ANCESTRY_RESPONSE)
+    results = process_ancestry_command(client_mocker, {"machine_id": "123abc"})
+    assert results.outputs[0] == MACHINE_ALERTS_OUTPUT
 
 
 class TestStopAndQuarantineFileCommand:

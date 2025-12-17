@@ -11,6 +11,8 @@ from CommonServerPython import *
 from dateutil.parser import parse
 from MicrosoftApiModule import *  # noqa: E402
 from requests import Response
+import hashlib
+
 
 # Disable insecure warnings
 urllib3.disable_warnings()
@@ -5035,6 +5037,161 @@ def process_details_command(client, args):  # pragma: no cover
         readable_output=readable_output, outputs_prefix=f"MicrosoftATP.HuntProcessDetails.Result.{query_purpose}", outputs=results
     )
 
+def iterate_ancestry(client,     timeout = None,
+    time_range = None,
+    device_name=None,
+    file_name=None,
+    file_pid=None,
+    sha1=None,
+    sha256=None,
+    md5=None,
+    device_id=None,
+    process_creation_time=None,):
+    # prepare query
+
+    if not(md5 or sha1 or sha256 or file_name):
+        raise DemistoException(f"At least one hashtype or filename/process name must be specified.")
+    if not(device_name or device_id):
+        raise DemistoException(f"At least device name or device id must be specified.")
+    query = "DeviceProcessEvents"
+    if device_name:
+        query += f'| where DeviceName == "{device_name}"'
+    if device_id:
+        query += f'| where DeviceId == "{device_id}"'
+    query += f'| where ProcessId == "{file_pid}"'
+    if sha1:
+        query += f'| where SHA1 == "{sha1}"'
+    if sha256:
+        query += f'| where SHA256 == "{sha256}"'
+    if md5:
+        query += f'| where MD5 == "{md5}"'
+    if file_name:
+        query += f'| where FileName == "{file_name}"'
+    if process_creation_time:
+        query += f'| extend timediff = datetime_diff("second", datetime({process_creation_time}), Timestamp)'
+        query += '| order by timediff asc'
+    query += '| limit 1'
+
+    # send request + return results and query used
+    try:
+        response = client.get_advanced_hunting(query, timeout, time_range)
+    except Exception as e:
+        raise Exception(f"Could not get process ancestry. error: {e!s}")
+    return response.get("Results"), query
+
+
+def process_ancestry_command(client, args):
+    timeout = arg_to_number(args.get("timeout", 10))
+    time_range = args.pop("time_range", None)
+    device_name = args.get("device_name")
+    file_name = args.get("file_name")
+    file_pid = args.get("file_pid")
+    sha1 = args.get("sha1")
+    sha256 = args.get("sha256")
+    md5 = args.get("md5")
+    device_id = args.get("device_id")
+    process_creation_time = arg_to_datetime(args.get("process_creation_time"))
+    show_query = argToBoolean(args.pop("show_query", False))
+    process_chain = None
+    process_json = []
+    fields_to_hash = f"{device_name}{file_name}{file_pid}{sha1}{sha256}{md5}{device_id}{process_creation_time}"
+    process_chain_id = hashlib.md5(fields_to_hash.encode()).hexdigest()
+    process_depth = 0
+    queries = "### Queries Used\n"
+    while True:
+        results, query = iterate_ancestry(
+            client,
+            timeout=timeout,
+            time_range=time_range,
+            device_name=device_name,
+            file_name=file_name,
+            file_pid=file_pid,
+            sha1=sha1,
+            sha256=sha256,
+            md5=md5,
+            device_id=device_id,
+            process_creation_time=process_creation_time,
+        )
+        queries += f"{query}\n"
+        if results:
+            result = results[0]
+            last_result = result
+            if not process_chain:
+                process_chain = f'{result["FileName"]}[{result["ProcessId"]}]'
+                process_json.append(
+                    {
+                        "FileName": result["FileName"],
+                        "ProcessId": result["ProcessId"],
+                        "CommandLine": result["ProcessCommandLine"],
+                        "ParentFileName": result["InitiatingProcessFileName"],
+                        "ParentPID": result["InitiatingProcessId"],
+                        "Depth": process_depth,
+                        "ProcessChainID": process_chain_id,
+                    }
+                )
+                process_depth += 1
+            process_chain = f'{result["InitiatingProcessFileName"]}[{result["InitiatingProcessId"]}] > {process_chain}'
+            process_json.append(
+                {
+                    "FileName": result["InitiatingProcessFileName"],
+                    "ProcessId": result["InitiatingProcessId"],
+                    "CommandLine": result["InitiatingProcessCommandLine"],
+                    "ChildFileName": process_json[len(process_json) - 1]["FileName"],
+                    "ChildPID": process_json[len(process_json) - 1]["ProcessId"],
+                    "ParentFileName": result["InitiatingProcessParentFileName"],
+                    "ParentPID": result["InitiatingProcessParentId"],
+                    "Depth": process_depth,
+                    "ProcessChainID": process_chain_id,
+                }
+            )
+            process_depth += 1
+            file_name = result["InitiatingProcessFileName"]
+            file_pid = result["InitiatingProcessId"]
+            process_creation_time = result["InitiatingProcessCreationTime"]
+            md5 = None
+            sha1 = None
+            sha256 = None
+        else:
+            if "last_result" not in locals():
+                return CommandResults(
+                    readable_output="No entries",
+                )
+            process_chain = f'{last_result["InitiatingProcessParentFileName"]}[{last_result["InitiatingProcessParentId"]}] > {process_chain}'
+            process_json.append(
+                {
+                    "FileName": last_result["InitiatingProcessParentFileName"],
+                    "ProcessId": last_result["InitiatingProcessParentId"],
+                    "ChildFileName": process_json[len(process_json) - 1]["FileName"],
+                    "ChildPID": process_json[len(process_json) - 1]["ProcessId"],
+                    "Depth": process_depth,
+                    "ProcessChainID": process_chain_id,
+                }
+            )
+            break
+
+    readable_output = f"### Process Ancestry\n{process_chain}"
+    if show_query:
+        readable_output = f"{queries}\n{readable_output}"
+    readable_table = tableToMarkdown(
+        "Process Ancestry Results",
+        process_json,
+        headers=[
+            "FileName",
+            "CommandLine",
+            "ProcessId",
+            "ParentFileName",
+            "ParentPID",
+            "Depth",
+        ],
+        removeNull=True,
+    )
+    readable_output += f"\n\n{readable_table}"
+    return CommandResults(
+        readable_output=readable_output,
+        outputs_prefix=f"MicrosoftATP.HuntProcessAncestry.Result",
+        outputs=process_json,
+    )
+
 
 def network_connections_command(client, args):  # pragma: no cover
     # prepare query
@@ -6587,6 +6744,8 @@ def main():  # pragma: no cover
             return_results(file_origin_command(client, args))
         elif command == "microsoft-atp-advanced-hunting-process-details":
             return_results(process_details_command(client, args))
+        elif command == "microsoft-atp-advanced-hunting-process-ancestry":
+            return_results(process_ancestry_command(client, args))
         elif command == "microsoft-atp-advanced-hunting-network-connections":
             return_results(network_connections_command(client, args))
         elif command == "microsoft-atp-advanced-hunting-privilege-escalation":
