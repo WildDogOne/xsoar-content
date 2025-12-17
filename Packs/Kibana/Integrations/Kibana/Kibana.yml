@@ -52,29 +52,39 @@ script:
     - description: Get Prebuilt Rules Status
       name: kb-get_prebuilt_rules_status
       outputs:
-        - contextPath: Kibana.Search.Results._index
-          description: The index to which the document belongs.
-          type: String
+        - contextPath: Kibana.Rule.rules_custom_installed
+          description: The amount of custom Rules installed
+          type: Number
+        - contextPath: Kibana.Rule.rules_installed
+          description: The amount of Prebuilt Rules installed
+          type: Number
+        - contextPath: Kibana.Rule.rules_not_installed
+          description: The amount of Prebuilt Rules not installed
+          type: Number
+        - contextPath: Kibana.Rule.rules_not_updated
+          description: The amount of Prebuilt Rules not up to date
+          type: Number
+        - contextPath: Kibana.Rule.timelines_installed
+          description: The amount of Prebuilt timelines installed
+          type: Number
+        - contextPath: Kibana.Rule.timelines_not_installed
+          description: The amount of Prebuilt timelines not installed
+          type: Number
+        - contextPath: Kibana.Rule.timelines_not_updated
+          description: The amount of Prebuilt timelines not up to date
+          type: Number
     - description: Get All Prebuilt Rules
       arguments:
         - description: Optional Rulename to get.
           name: title
           required: false
       name: kb-get_all_rules
-      outputs:
-        - contextPath: Kibana.Search.Results._index
-          description: The index to which the document belongs.
-          type: String
     - description: Get Dataview
       arguments:
         - description: The Dataview you are looking for.
           name: dataview
           required: true
       name: kb-get_dataview
-      outputs:
-        - contextPath: Kibana.Search.Results._index
-          description: The index to which the document belongs.
-          type: String
   isfetch: false
   runonce: false
   script: '-'
