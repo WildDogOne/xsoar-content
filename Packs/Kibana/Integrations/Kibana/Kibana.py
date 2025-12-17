@@ -1,41 +1,828 @@
-import re
-
 import demistomock as demisto  # noqa: F401
 from CommonServerPython import *  # noqa: F401
 
 from CommonServerUserPython import *
 
 """IMPORTS"""
-import json
 import warnings
-from datetime import datetime
-
+import json
+from pprint import pprint
+import logging
 import requests
+from requests.auth import HTTPBasicAuth
+
+
+class kibana:
+    def __init__(
+        self, base_url=None, username=None, password=None, api_key=None, ssl_verify=True
+    ):
+        """Initialize the Kibana client.
+
+        Args:
+            base_url (str): The base URL for the Kibana instance
+            username (str, optional): Username for basic authentication
+            password (str, optional): Password for basic authentication
+            api_key (str, optional): API key for authentication
+            ssl_verify (bool, optional): Whether to verify SSL certificates. Defaults to True.
+
+        Raises:
+            ValueError: If neither API key nor username/password is provided, or if base_url is not provided
+        """
+        if not api_key and (not username and not password):
+            raise ValueError("No API Key or Username/Password provided")
+        if not base_url:
+            raise ValueError("No Base URL provided")
+        else:
+            self.base_url = base_url
+        if username:
+            self.username = username
+        if password:
+            self.password = password
+        if api_key:
+            self.headers = {
+                "Authorization": f"ApiKey {api_key}",
+                "Accept": "application/json",
+            }
+            self.api_key = True
+        else:
+            self.api_key = False
+        self.ssl_verify = ssl_verify
+
+    def _get_pagination(self, url, headers=None, params={}):
+        """Get paginated results from Kibana API.
+
+        Args:
+            url (str): The API endpoint URL
+            headers (dict, optional): Custom headers to include in the request
+            params (dict, optional): Query parameters for the request
+
+        Returns:
+            list: Combined results from all pages, or False if error occurs
+        """
+        if self.headers is None:
+            headers = {"Accept": "application/json"}
+        else:
+            headers = self.headers
+        run = 1
+        page = 1
+        output = []
+        while run == 1:
+            params["page"] = page
+            if self.api_key:
+                response = requests.request(
+                    "GET",
+                    url,
+                    headers=headers,
+                    params=params,
+                    verify=self.ssl_verify,
+                )
+            else:
+                response = requests.request(
+                    "GET",
+                    url,
+                    headers=headers,
+                    params=params,
+                    verify=self.ssl_verify,
+                    auth=HTTPBasicAuth(self.username, self.password),
+                )
+            if response.status_code != 200:
+                logger.error("Cannot get")
+                logger.info(response)
+                return False
+            else:
+                response = response.json()
+                if len(response["data"]) == 0:
+                    run = 0
+                else:
+                    output += response["data"]
+                    page += 1
+        return output
+
+    def _get(self, url, payload=None, headers=None, params=None):
+        """Send a GET request to Kibana API.
+
+        Args:
+            url (str): The API endpoint URL
+            payload (dict, optional): JSON payload to send with the request
+            headers (dict, optional): Custom headers to include in the request
+            params (dict, optional): Query parameters for the request
+
+        Returns:
+            dict: JSON response if successful, None otherwise
+        """
+        if payload is None:
+            payload = {}
+        if self.headers is None:
+            headers = {"Accept": "application/json"}
+        else:
+            headers = self.headers
+        if self.api_key:
+            response = requests.request(
+                "GET",
+                url,
+                headers=headers,
+                json=payload,
+                verify=self.ssl_verify,
+                params=params,
+            )
+        else:
+            response = requests.request(
+                "GET",
+                url,
+                headers=headers,
+                json=payload,
+                verify=self.ssl_verify,
+                auth=HTTPBasicAuth(self.username, self.password),
+                params=params,
+            )
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code == 404:
+            logger.error(f"Error 404\n{response.url}")
+            logger.error(response.json())
+        else:
+            pprint(response.status_code)
+
+    def _put(self, url, payload=None, headers=None):
+        """Send a PUT request to Kibana API.
+
+        Args:
+            url (str): The API endpoint URL
+            payload (dict, optional): JSON payload to send with the request
+            headers (dict, optional): Custom headers to include in the request
+
+        Returns:
+            dict: JSON response if successful, None otherwise
+        """
+        if payload is None:
+            payload = {}
+        if self.headers is None:
+            headers = {"Accept": "application/json", "kbn-xsrf": ""}
+        else:
+            headers = self.headers
+        response = requests.request(
+            "PUT",
+            url,
+            headers=headers,
+            json=payload,
+            verify=self.ssl_verify,
+            auth=HTTPBasicAuth(self.username, self.password),
+        )
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code == 404:
+            logger.error(f"Error 404\n{response.url}")
+            logger.error(response.json())
+        else:
+            pprint(response.status_code)
+
+    def _delete(self, url, headers=None):
+        """Send a DELETE request to Kibana API.
+
+        Args:
+            url (str): The API endpoint URL
+            headers (dict, optional): Custom headers to include in the request
+
+        Returns:
+            str: Response text if successful, None otherwise
+        """
+        if self.headers is None:
+            headers = {"Accept": "application/json", "kbn-xsrf": ""}
+        else:
+            headers = self.headers
+        response = requests.request(
+            "DELETE",
+            url,
+            headers=headers,
+            verify=self.ssl_verify,
+            auth=HTTPBasicAuth(self.username, self.password),
+        )
+        if response.status_code == 200:
+            return response.text
+        elif response.status_code == 404:
+            logger.error(f"Error 404\n{response.url}")
+            logger.error(response.json())
+        else:
+            logger.error(response.status_code)
+            logger.error(response.json())
+
+    def _post(self, url, payload=None, headers=None, params=None):
+        """Send a POST request to Kibana API.
+
+        Args:
+            url (str): The API endpoint URL
+            payload (dict, optional): JSON payload to send with the request
+            headers (dict, optional): Custom headers to include in the request
+            params (dict, optional): Query parameters for the request
+
+        Returns:
+            Response: Response object if successful, None otherwise
+        """
+        if payload is None:
+            payload = {}
+        if self.headers is None:
+            headers = {"Accept": "application/json", "kbn-xsrf": ""}
+        else:
+            headers = self.headers
+            headers["kbn-xsrf"] = ""
+        if self.api_key:
+            response = requests.request(
+                "POST",
+                url,
+                headers=headers,
+                json=payload,
+                verify=self.ssl_verify,
+                params=params,
+            )
+        else:
+            response = requests.request(
+                "POST",
+                url,
+                headers=headers,
+                json=payload,
+                verify=self.ssl_verify,
+                auth=HTTPBasicAuth(self.username, self.password),
+                params=params,
+            )
+        if response.status_code == 200:
+            return response
+        elif response.status_code == 409:
+            return response
+        elif response.status_code == 404:
+            logger.error(f"Error 404\n{response.url}")
+            logger.error(response.json())
+        else:
+            logger.error(f"Unable to POST\nStatus Code: {response.status_code}")
+            logger.error(response.json())
+
+    def create_dataview(self, dataview=None, space_id="default"):
+        """Create a new data view in Kibana.
+
+        Args:
+            dataview (dict, optional): The data view configuration
+            space_id (str, optional): The space ID. Defaults to "default"
+
+        Returns:
+            Response: Response object from the API call
+        """
+        if dataview:
+            dataview = {"data_view": dataview}
+            logger.info(dataview)
+            url = self.base_url + "/s/" + space_id + "/api/data_views/data_view"
+
+            payload = dataview
+            return self._post(url, payload=payload)
+        else:
+            logger.error("No dataview provided")
+
+    def get_dataview(self, dataview_id=None, space_id="default"):
+        """Get a data view by ID or name.
+
+        Args:
+            dataview_id (str, optional): The data view ID or name to search for
+            space_id (str, optional): The space ID. Defaults to "default"
+
+        Returns:
+            str: The data view ID if found, False otherwise
+        """
+        if dataview_id:
+            url = self.base_url + "/s/" + space_id + "/api/data_views"
+            dataviews = self._get(url)
+            for dataview in dataviews["data_view"]:
+                if "name" in dataview and dataview["name"] == dataview_id:
+                    return dataview and dataview["id"]
+                elif "title" in dataview and dataview["title"] == dataview_id:
+                    return dataview and dataview["id"]
+            return False
+        else:
+            logger.error("No dataview id provided")
+
+    def delete_dataview(self, dataview_id=None, space_id="default"):
+        """Delete a data view by ID.
+
+        Args:
+            dataview_id (str, optional): The data view ID to delete
+            space_id (str, optional): The space ID. Defaults to "default"
+
+        Returns:
+            str: Response text from the API call
+        """
+        if dataview_id:
+            url = (
+                self.base_url
+                + "/s/"
+                + space_id
+                + "/api/data_views/data_view/"
+                + dataview_id
+            )
+            return self._delete(url)
+        else:
+            logger.error("No dataview id provided")
+
+    def install_package(self, package_name=None, package_version=None):
+        """Install a package from the Elastic Package Registry.
+
+        Args:
+            package_name (str, optional): Name of the package to install
+            package_version (str, optional): Version of the package to install
+
+        Returns:
+            Response: Response object from the API call
+        """
+        if package_name:
+            url = self.base_url + "/api/fleet/epm/packages/" + package_name.lower()
+            if package_version:
+                url = url + "/" + package_version
+            else:
+                package_version = self._get(url)["item"]["version"]
+                url = url + "/" + package_version
+            return self._post(url)
+        else:
+            logger.error("No Package Name provided")
+
+    def get_install_status(self, package_name=None):
+        """Check if a package is installed.
+
+        Args:
+            package_name (str, optional): Name of the package to check
+
+        Returns:
+            bool: True if package is installed, False otherwise
+        """
+        if package_name:
+            url = self.base_url + "/api/fleet/epm/packages/" + package_name.lower()
+            installed = self._get(url)["response"]["status"]
+            if installed == "installed":
+                return True
+            else:
+                return False
+        else:
+            logger.error("No Package Name provided")
+
+    def delete_package(self, package_name=None):
+        """Delete an installed package.
+
+        Args:
+            package_name (str, optional): Name of the package to delete
+
+        Returns:
+            str: Response text from the API call
+        """
+        if package_name:
+            url = self.base_url + "/api/fleet/epm/packages/" + package_name.lower()
+            package_version = self._get(url)["item"]["version"]
+            url = url + "/" + package_version
+            return self._delete(url)
+        else:
+            logger.error("No Package Name provided")
+
+    def update_package(self, package_name=None):
+        """Update an installed package.
+
+        Args:
+            package_name (str, optional): Name of the package to update
+
+        Returns:
+            dict: JSON response from the API call
+        """
+        if package_name:
+            url = self.base_url + "/api/fleet/epm/packages/" + package_name.lower()
+            package_version = self._get(url)["item"]["version"]
+            url = url + "/" + package_version
+            return self._put(url)
+        else:
+            logger.error("No Package Name provided")
+
+    def create_agent_policy(self, name=None, namespace="default"):
+        """Create a new agent policy.
+
+        Args:
+            name (str, optional): Name of the agent policy
+            namespace (str, optional): Namespace for the policy. Defaults to "default"
+
+        Returns:
+            Response: Response object from the API call
+        """
+        if name:
+            url = self.base_url + "/api/fleet/agent_policies"
+
+            payload = {
+                "name": name,
+                "namespace": namespace,
+                "monitoring_enabled": ["metrics", "logs"],
+            }
+            return self._post(url, payload)
+        else:
+            logger.error("No Agent Policy Name provided")
+
+    def get_agent_policy(self, name=None):
+        """Get an agent policy by name.
+
+        Args:
+            name (str, optional): Name of the agent policy to retrieve
+
+        Returns:
+            dict: The agent policy if found, False otherwise
+        """
+        if name:
+            url = self.base_url + "/api/fleet/agent_policies"
+            policies = self._get(url)
+            for policy in policies["items"]:
+                if policy["name"] == name:
+                    return policy
+            return False
+        else:
+            logger.error("No Agent Policy Name provided")
+
+    def delete_agent_policy(self, name=None):
+        """Delete an agent policy by name.
+
+        Args:
+            name (str, optional): Name of the agent policy to delete
+
+        Returns:
+            Response: Response object from the API call, or False if policy not found
+        """
+        if name:
+            policy = self.get_agent_policy(name)
+            if policy:
+                url = self.base_url + "/api/fleet/agent_policies/delete"
+
+                payload = {"agentPolicyId": policy["id"]}
+                return self._post(url, payload)
+            return False
+        else:
+            logger.error("No Agent Policy Name provided")
+
+    def get_package(self, package_name=None):
+        """Get package information.
+
+        Args:
+            package_name (str, optional): Name of the package to retrieve
+
+        Returns:
+            dict: Package information from the API response
+        """
+        if package_name:
+            url = self.base_url + "/api/fleet/epm/packages/" + package_name.lower()
+            return self._get(url)["response"]
+        else:
+            logger.error("No Package Name provided")
+
+    def create_package_policy(
+        self,
+        package_policy_name=None,
+        package_name=None,
+        namespace="default",
+        agent_policy=None,
+    ):
+        """Create a new package policy.
+
+        Args:
+            package_policy_name (str, optional): Name of the package policy
+            package_name (str, optional): Name of the package to associate
+            namespace (str, optional): Namespace for the policy. Defaults to "default"
+            agent_policy (str, optional): Name of the agent policy to use
+
+        Returns:
+            Response: Response object from the API call
+        """
+        if package_policy_name:
+            url = self.base_url + "/api/fleet/package_policies"
+            agent_policy_id = self.get_agent_policy(name=agent_policy)["id"]
+            package = self.get_package(package_name=package_name)
+            return package["data_streams"][0]["streams"][0]
+
+            payload = {
+                "description": "",
+                "enabled": True,
+                "inputs": [
+                    {
+                        "enabled": True,
+                        "policy_template": "suricata",
+                        "streams": [package["data_streams"][0]["streams"][0]],
+                        "type": "logfile",
+                    }
+                ],
+                "name": package_policy_name,
+                "namespace": namespace,
+                "output_id": "",
+                "package": {
+                    "name": "suricata",
+                    "title": "Suricata Events",
+                    "version": "1.7.0",
+                },
+                "policy_id": agent_policy_id,
+            }
+            return self._post(url, payload)
+        else:
+            logger.error("No Package Policy Name provided")
+
+    def get_service_token(self, token_name=None, token_value=None):
+        """Get a service token.
+
+        Args:
+            token_name (str, optional): Name for the service token
+            token_value (str, optional): Value for the service token
+
+        Returns:
+            str: The service token value
+        """
+        url = self.base_url + "/api/fleet/service_tokens"
+        return self._post(url).json()["value"]
+
+    def get_enrolment_key(self, agent_policy_name=None):
+        """Get an enrollment API key for an agent policy.
+
+        Args:
+            agent_policy_name (str, optional): Name of the agent policy
+
+        Returns:
+            str: The enrollment API key if found, None otherwise
+        """
+        if agent_policy_name:
+            url = self.base_url + "/api/fleet/enrollment_api_keys"
+            keys = self._get(url)
+            # pprint(keys)
+            for key in keys["items"]:
+                if key["policy_id"] == agent_policy_name:
+                    return key["api_key"]
+        else:
+            logger.error("No Agent Policy Name provided")
+
+    def get_fleet_outputs(self):
+        """Get all fleet outputs.
+
+        Returns:
+            dict: List of all fleet outputs
+        """
+        url = self.base_url + "/api/fleet/outputs"
+        return self._get(url)
+
+    def get_fleet_output(self, output_name=None):
+        """Get a fleet output by name.
+
+        Args:
+            output_name (str, optional): Name of the fleet output to retrieve
+
+        Returns:
+            str: The fleet output ID if found, False otherwise
+        """
+        if output_name:
+            existing_outputs = self.get_fleet_outputs()
+            for output in existing_outputs["items"]:
+                if output["name"] == output_name:
+                    return output["id"]
+            else:
+                return False
+        else:
+            return False
+
+    def create_fleet_output(
+        self,
+        type="elasticsearch",
+        hosts=None,
+        output_id=None,
+        output_name=None,
+        is_default=True,
+        is_default_monitoring=True,
+        ca_trusted_fingerprint=None,
+        config_yaml=None,
+    ):
+        """Create a new fleet output.
+
+        Args:
+            type (str, optional): Type of output. Defaults to "elasticsearch"
+            hosts (list, optional): List of host URLs
+            output_id (str, optional): ID for the output
+            output_name (str, optional): Name for the output
+            is_default (bool, optional): Whether this is the default output. Defaults to True
+            is_default_monitoring (bool, optional): Whether this is the default monitoring output. Defaults to True
+            ca_trusted_fingerprint (str, optional): CA fingerprint for SSL verification
+            config_yaml (str, optional): YAML configuration for the output
+
+        Returns:
+            Response: Response object from the API call
+        """
+        if hosts and output_name:
+            url = self.base_url + "/api/fleet/outputs"
+            payload = {
+                "name": output_name,
+                "hosts": hosts,
+                "type": type,
+                "is_default": is_default,
+                "is_default_monitoring": is_default_monitoring,
+            }
+            if output_id:
+                payload["id"] = output_id
+            if config_yaml:
+                payload["config_yaml"] = config_yaml
+            if ca_trusted_fingerprint:
+                payload["ca_sha256"] = ca_trusted_fingerprint
+            return self._post(url, payload)
+        else:
+            logger.error("No Hosts or output Name provided")
+
+    def update_fleet_output(
+        self,
+        output_name=None,
+        type=None,
+        hosts=None,
+        output_id=None,
+        is_default=None,
+        is_default_monitoring=None,
+        ca_trusted_fingerprint=None,
+        config_yaml=None,
+    ):
+        """Update a fleet output.
+
+        Args:
+            output_name (str, optional): Name of the fleet output to update
+            type (str, optional): New type for the output
+            hosts (list, optional): New list of host URLs
+            output_id (str, optional): ID for the output
+            is_default (bool, optional): Whether this should be the default output
+            is_default_monitoring (bool, optional): Whether this should be the default monitoring output
+            ca_trusted_fingerprint (str, optional): New CA fingerprint for SSL verification
+            config_yaml (str, optional): New YAML configuration for the output
+
+        Returns:
+            dict: JSON response from the API call
+        """
+        if output_name:
+            output_id = self.get_fleet_output(output_name)
+            if output_id:
+                url = self.base_url + "/api/fleet/outputs/" + output_id
+                payload = {}
+                if type:
+                    payload["type"] = type
+                if hosts:
+                    payload["hosts"] = hosts
+                if is_default is not None:
+                    payload["is_default"] = is_default
+                if is_default_monitoring is not None:
+                    payload["is_default_monitoring"] = is_default_monitoring
+                if config_yaml:
+                    payload["config_yaml"] = config_yaml
+                if ca_trusted_fingerprint:
+                    payload["ca_sha256"] = ca_trusted_fingerprint
+                return self._put(url, payload)
+            else:
+                logger.error("No Output ID found")
+        else:
+            logger.error("No Output Name provided")
+
+    def delete_fleet_output(self, output_name=None):
+        if output_name:
+            output_id = self.get_fleet_output(output_name)
+            if output_id:
+                url = self.base_url + "/api/fleet/outputs/" + output_id
+                return self._delete(url)
+            else:
+                logger.error("No Output ID found")
+        else:
+            logger.error("No Output Name provided")
+
+    def load_prebuilt_rules(self):
+        url = self.base_url + "/api/detection_engine/rules/prepackaged"
+        return self._put(url)
+
+    def get_prebuilt_rules_status(self):
+        url = self.base_url + "/api/detection_engine/rules/prepackaged/_status"
+        return self._get(url)
+
+    def get_rule(self, rule_id):
+        url = self.base_url + "/api/detection_engine/rules"
+        params = {"id": rule_id}
+        return self._get(url, params=params)
+
+    def get_all_rules(self):
+        page = 1
+        output_data = []
+        while True:
+            url = self.base_url + "/api/detection_engine/rules/_find?page=" + str(page)
+            x = self._get(url)
+            if len(x["data"]) > 0:
+                output_data += x["data"]
+                page += 1
+            else:
+                break
+        return output_data
+
+    def get_all_exception_lists(self):
+        return self._get_pagination(self.base_url + "/api/exception_lists/_find")
+
+    def export_exception_list(self, id=None, list_id=None, namespace_type=None):
+        url = self.base_url + "/api/exception_lists/_export"
+        params = {"id": id, "list_id": list_id, "namespace_type": namespace_type}
+        results = self._post(url, params=params)
+        outputs = []
+        for result in results.text.split("\n"):
+            if len(result) > 0:
+                outputs.append(json.loads(result))
+        return outputs
+
+    def bulk_change_rules(
+        self, rule_ids=None, action="enable", query=None, edit=None, duplicate=None
+    ):
+        if rule_ids:
+            payload = {"ids": rule_ids, "action": action}
+            if query:
+                payload["query"] = query
+            if edit:
+                payload["edit"] = edit
+            if duplicate:
+                payload["duplicate"] = duplicate
+            url = self.base_url + "/api/detection_engine/rules/_bulk_action"
+            return self._post(url, payload)
+        else:
+            logger.error("No Rules ids provided")
+
+    def enable_prebuild_ml_job(self, job_name=None):
+        url = self.base_url + "/api/ml/jobs/force_start_datafeeds"
+        if job_name:
+            payload = {"datafeedIds": [f"datafeed-{job_name}"]}
+            return self._post(url, payload)
+        else:
+            logger.error("No Job Name provided")
+
+    def disable_prebuild_ml_job(self, job_name=None):
+        url = self.base_url + "/api/ml/jobs/stop_datafeeds"
+        if job_name:
+            payload = {"datafeedIds": [f"datafeed-{job_name}"]}
+            return self._post(url, payload)
+        else:
+            logger.error("No Job Name provided")
+
+    def get_exception_container(self, container_name=None):
+        url = self.base_url + "/api/exception_lists/_find"
+        if container_name:
+            exception_containers = self._get_pagination(url)
+            for exception_container in exception_containers:
+                if container_name in exception_container["name"]:
+                    return exception_container
+            return False
+            # return exception_containers
+        else:
+            logger.error("No Container Name provided")
+
+    def create_exception_container(
+        self, container_name=None, container_type="detection", description=None
+    ):
+        url = self.base_url + "/api/exception_lists"
+        if container_name:
+            payload = {
+                "name": container_name,
+                "type": container_type,
+                "list_id": container_name.replace(" ", "_").lower(),
+            }
+            if description:
+                payload["description"] = description
+            else:
+                payload["description"] = container_name
+            return self._post(url, payload)
+        else:
+            logger.error("No Container Name provided")
+
+    def delete_exception_container(self, container_name=None, list_id=None):
+        if container_name and not list_id:
+            container = self.get_exception_container(container_name)
+            if container:
+                list_id = container["list_id"]
+            else:
+                logger.error("No Container found")
+        if list_id:
+            url = self.base_url + "/api/exception_lists?list_id=" + list_id
+            return self._delete(url)
+        else:
+            logger.error("No Container Name or List ID provided")
+
+    def attach_container_to_rule(
+        self, container_name=None, rule_name=None, list_id=None
+    ):
+        if container_name and not list_id:
+            container = self.get_exception_container(container_name)
+            if container:
+                list_id = container["list_id"]
+            else:
+                logger.error("No Container found")
+
+    def post_close_alert(self, signal_ids):
+        url = self.base_url + "/api/detection_engine/signals/status"
+        payload = {"signal_ids": signal_ids, "status": "closed"}
+        self._post(url, payload)
+
+    def post_ack_alert(self, signal_ids):
+        url = self.base_url + "/api/detection_engine/signals/status"
+        payload = {"signal_ids": signal_ids, "status": "in-progress"}
+        self._post(url, payload)
+
+
 import urllib3
-from dateutil.parser import parse
 
 # Disable insecure warnings
 urllib3.disable_warnings()
 warnings.filterwarnings(action="ignore", message=".*using SSL with verify_certs=False is insecure.")
-
-ELASTICSEARCH_V8 = "Elasticsearch_v8"
-ELASTICSEARCH_V9 = "Elasticsearch_v9"
-OPEN_SEARCH = "OpenSearch"
-ELASTIC_SEARCH_CLIENT = demisto.params().get("client_type")
-if ELASTIC_SEARCH_CLIENT == OPEN_SEARCH:
-    from opensearch_dsl import Search
-    from opensearch_dsl.query import QueryString
-    from opensearchpy import NotFoundError, RequestsHttpConnection
-    from opensearchpy import OpenSearch as Elasticsearch
-elif ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V8, ELASTICSEARCH_V9]:
-    from elastic_transport import RequestsHttpNode
-    from elasticsearch import Elasticsearch, NotFoundError  # type: ignore[assignment]
-    from elasticsearch.dsl import Search
-    from elasticsearch.dsl.query import QueryString
-else:  # Elasticsearch (<= v7)
-    from elasticsearch7 import Elasticsearch, NotFoundError, RequestsHttpConnection  # type: ignore[assignment,misc]
-    from elasticsearch.dsl import Search
-    from elasticsearch.dsl.query import QueryString
 
 ES_DEFAULT_DATETIME_FORMAT = "yyyy-MM-dd HH:mm:ss.SSSSSS"
 PYTHON_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
@@ -48,1163 +835,38 @@ if API_KEY_ID:
     USERNAME = ""
     API_KEY = (API_KEY_ID, PASSWORD)
 PROXY = demisto.params().get("proxy")
-HTTP_ERRORS = {
-    400: "400 Bad Request - Incorrect or invalid parameters",
-    401: "401 Unauthorized - Incorrect or invalid username or password",
-    403: "403 Forbidden - The account does not support performing this task",
-    404: "404 Not Found - Elasticsearch server was not found",
-    408: "408 Timeout - Check port number or Elasticsearch server credentials",
-    410: "410 Gone - Elasticsearch server no longer exists in the service",
-    500: "500 Internal Server Error - Internal error",
-    503: "503 Service Unavailable",
-}
-
-"""VARIABLES FOR FETCH INCIDENTS"""
-param = demisto.params()
-TIME_FIELD = param.get("fetch_time_field", "")
-FETCH_INDEX = param.get("fetch_index", "")
-FETCH_QUERY_PARM = param.get("fetch_query", "")
-RAW_QUERY = param.get("raw_query", "")
-FETCH_TIME = param.get("fetch_time", "3 days")
-FETCH_SIZE = int(param.get("fetch_size", 50))
-INSECURE = not param.get("insecure", False)
-TIME_METHOD = param.get("time_method", "Simple-Date")
-TIMEOUT = int(param.get("timeout") or 60)
-MAP_LABELS = param.get("map_labels", True)
-
-FETCH_QUERY = RAW_QUERY or FETCH_QUERY_PARM
 
 
-def get_value_by_dot_notation(dictionary, key):
-    """
-    Get dictionary value by key using dot notation.
-
-    Args:
-        dictionary (dict): The dictionary to search within.
-        key (str): The key in dot notation.
-
-    Returns:
-        The value corresponding to the key if found, otherwise None.
-    """
-    value = dictionary
-    demisto.debug("Trying to get value by dot notation")
-    for k in key.split("."):
-        if isinstance(value, dict):
-            value = value.get(k)
-        else:
-            demisto.debug(f"Last value is not a dict, returning None. {value=}")
-            return None
-    return value
+def kibana_client():
+    kibana_client = kibana(base_url=SERVER, api_key=PASSWORD)
+    return kibana_client
 
 
-def convert_date_to_timestamp(date):
-    """converts datetime to the relevant timestamp format.
-
-    Args:
-        date(datetime): A datetime object setting up the last fetch time
-
-    Returns:
-        (num | str): The formatted timestamp
-    """
-    demisto.debug(f"Converting date to timestamp: {date}")
-    # this theoretically shouldn't happen but just in case
-    if str(date).isdigit():
-        return int(date)
-
-    if TIME_METHOD == "Timestamp-Seconds":
-        return int(date.timestamp())
-
-    if TIME_METHOD == "Timestamp-Milliseconds":
-        return int(date.timestamp() * 1000)
-
-    # In case of 'Simple-Date'.
-    return datetime.strftime(date, PYTHON_DEFAULT_DATETIME_FORMAT)
-
-
-def timestamp_to_date(timestamp_string):
-    """Converts a timestamp string to a datetime object.
-
-    Args:
-        timestamp_string(string): A string with a timestamp in it.
-
-    Returns:
-        (datetime).represented by the timestamp in the format '%Y-%m-%d %H:%M:%S.%f'
-    """
-    timestamp_number: float
-    # find timestamp in form of more than seconds since epoch: 1572164838000
-    if TIME_METHOD == "Timestamp-Milliseconds":
-        timestamp_number = float(int(timestamp_string) / 1000)
-
-    # find timestamp in form of seconds since epoch: 1572164838
-    else:  # TIME_METHOD == 'Timestamp-Seconds':
-        demisto.debug(f"{TIME_METHOD=}. Should be Timestamp-Seconds.")
-        timestamp_number = float(timestamp_string)
-
-    # convert timestamp (a floating point number representing time since epoch) to datetime
-    return datetime.utcfromtimestamp(timestamp_number)
-
-
-def get_api_key_header_val(api_key):
-    """
-    Check the type of the passed api_key and return the correct header value
-    for the `API Key authentication
-    <https://www.elastic.co/guide/en/elasticsearch/reference/current/security-api-create-api-key.html>`
-    :arg api_key, either a tuple or a base64 encoded string
-    """
-    if isinstance(api_key, tuple | list):
-        s = f"{api_key[0]}:{api_key[1]}".encode()
-        return "ApiKey " + base64.b64encode(s).decode("utf-8")
-    return "ApiKey " + api_key
-
-
-def elasticsearch_builder(proxies):
-    """Builds an Elasticsearch obj with the necessary credentials, proxy settings and secure connection."""
-
-    connection_args: Dict[str, Union[bool, int, str, list, tuple[str, str], RequestsHttpConnection]] = {
-        "hosts": [SERVER],
-        "verify_certs": INSECURE,
-        "timeout": TIMEOUT,
-    }
-    demisto.debug(f"Building Elasticsearch client with args: {connection_args}")
-    if ELASTIC_SEARCH_CLIENT not in [ELASTICSEARCH_V9, ELASTICSEARCH_V8]:
-        # Adding the proxy related parameters to the Elasticsearch client v7 and below or OpenSearch (BC)
-        connection_args["connection_class"] = RequestsHttpConnection  # type: ignore[assignment]
-        connection_args["proxies"] = proxies
-
-    else:
-        # Adding the proxy related parameter to the Elasticsearch client v8
-        # Reference- https://github.com/elastic/elastic-transport-python/issues/53#issuecomment-1447903214
-        class CustomHttpNode(RequestsHttpNode):  # pylint: disable=E0601
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                self.session.proxies = proxies
-
-        connection_args["node_class"] = CustomHttpNode  # type: ignore[assignment]
-
-    if API_KEY_ID:
-        connection_args["api_key"] = API_KEY
-
-    elif USERNAME:
-        if ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V9, ELASTICSEARCH_V8]:
-            connection_args["basic_auth"] = (USERNAME, PASSWORD)
-        else:  # Elasticsearch version v7 and below or OpenSearch (BC)
-            connection_args["http_auth"] = (USERNAME, PASSWORD)
-
-    es = Elasticsearch(**connection_args)  # type: ignore[arg-type]
-    # this should be passed as api_key via Elasticsearch init, but this code ensures it'll be set correctly
-    # In some versions of the ES library, the transport object does not have a get_session func
-    if API_KEY_ID and hasattr(es, "transport") and hasattr(es.transport, "get_connection"):
-        es.transport.get_connection().session.headers["authorization"] = get_api_key_header_val(  # type: ignore[attr-defined]
-            API_KEY
-        )
-
-    return es
-
-
-def get_hit_table(hit):
-    """Create context for a single hit in the search.
-
-    Args:
-        hit(Dict): a dictionary representing a single hit in the search.
-
-    Returns:
-        (dict).The hit context.
-        (list).the headers of the hit.
-    """
-    table_context = {
-        "_index": hit.get("_index"),
-        "_id": hit.get("_id"),
-        "_type": hit.get("_type"),
-        "_score": hit.get("_score"),
-    }
-    headers = ["_index", "_id", "_type", "_score"]
-    if hit.get("_source") is not None:
-        for source_field in hit.get("_source"):
-            table_context[str(source_field)] = hit.get("_source").get(str(source_field))
-            headers.append(source_field)
-
-    return table_context, headers
-
-
-def results_to_context(index, query, base_page, size, total_dict, response, event=False):
-    """Creates context for the full results of a search.
-
-    Args:
-        index(str): the index in which the search was made.
-        query(str): the query of the search.
-        base_page(int): the base page from which the search is made.
-        size(int): the amount of results to return.
-        total_dict(dict): a dictionary containing the info about thenumber of total results found
-        response(Dict): the raw response of the results.
-
-    Returns:
-        (dict).The full context for the search results.
-        (list).The metadata headers of the search.
-        (list).the context for the hits.
-        (list).the headers of the hits.
-    """
-    search_context = {
-        "Server": SERVER,
-        "Index": index,
-        "Query": query,
-        "Page": base_page,
-        "Size": size,
-        "total": total_dict,
-        "max_score": response.get("hits").get("max_score"),
-        "took": response.get("took"),
-        "timed_out": response.get("timed_out"),
-    }
-
-    if aggregations := response.get("aggregations"):
-        search_context["aggregations"] = aggregations
-
-    hit_headers = []  # type: List
-    hit_tables = []
-    if total_dict.get("value") > 0:
-        if not event:
-            results = response.get("hits").get("hits", [])
-        else:
-            results = response.get("hits").get("events", [])
-
-        for hit in results:
-            single_hit_table, single_header = get_hit_table(hit)
-            hit_tables.append(single_hit_table)
-            hit_headers = list(set(single_header + hit_headers) - {"_id", "_type", "_index", "_score"})
-        hit_headers = ["_id", "_index", "_type", "_score"] + hit_headers
-
-    search_context["Results"] = response.get("hits").get("hits")
-    meta_headers = ["Query", "took", "timed_out", "total", "max_score", "Server", "Page", "Size", "aggregations"]
-    return search_context, meta_headers, hit_tables, hit_headers
-
-
-def get_total_results(response_dict):
-    """Creates a dictionary with all for the number of total results found
-
-    Args:
-        response_dict(dict): the raw response from elastic search.
-
-    Returns:
-        (dict).The total results info for the context.
-        (num).The number of total results.
-    """
-    total_results = response_dict.get("hits", {}).get("total")
-    if not str(total_results).isdigit():
-        # if in version 7 - total number of hits has value field
-        total_results = total_results.get("value")
-        total_dict = response_dict.get("hits").get("total")
-
-    else:
-        total_dict = {
-            "value": total_results,
-        }
-
-    return total_dict, total_results
-
-
-def search_command(proxies):
-    """Performs a search in Elasticsearch."""
-    index = demisto.args().get("index")
-    query = demisto.args().get("query")
-    fields = demisto.args().get("fields")  # fields to display
-    explain = demisto.args().get("explain", "false").lower() == "true"
-    base_page = int(demisto.args().get("page"))
-    size = int(demisto.args().get("size"))
-    sort_field = demisto.args().get("sort-field")
-    sort_order = demisto.args().get("sort-order")
-    query_dsl = demisto.args().get("query_dsl")
-    timestamp_field = demisto.args().get("timestamp_field")
-    timestamp_range_start = demisto.args().get("timestamp_range_start")
-    timestamp_range_end = demisto.args().get("timestamp_range_end")
-
-    if query and query_dsl:
-        return_error("Both query and query_dsl are configured. Please choose between query or query_dsl.")
-
-    es = elasticsearch_builder(proxies)
-    time_range_dict = None
-    if timestamp_range_end or timestamp_range_start:
-        time_range_dict = get_time_range(
-            time_range_start=timestamp_range_start,
-            time_range_end=timestamp_range_end,
-            time_field=timestamp_field,
-        )
-    demisto.debug(f"Executing search with index={index}, query={query}, query_dsl={query_dsl}")
-
-    if query_dsl:
-        query_dsl = query_string_to_dict(query_dsl)
-        if query_dsl.get("size", False) or query_dsl.get("page", False):
-            response = execute_raw_query(es, query_dsl, index)
-        else:
-            response = execute_raw_query(es, query_dsl, index, size, base_page)
-
-    else:
-        que = QueryString(query=query)
-        search = Search(using=es, index=index).query(que)[base_page: base_page + size]
-        if explain:
-            # if 'explain parameter is set to 'true' - adds explanation section to search results
-            search = search.extra(explain=True)
-
-        if time_range_dict:
-            search = search.filter(time_range_dict)
-
-        if fields is not None:
-            fields = fields.split(",")
-            search = search.source(fields)
-
-        if sort_field is not None:
-            search = search.sort({sort_field: {"order": sort_order}})
-
-        if ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V9, ELASTICSEARCH_V8, OPEN_SEARCH]:
-            response = search.execute().to_dict()
-
-        else:  # Elasticsearch v7 and below
-            # maintain BC by using the ES client directly (avoid using the elasticsearch_dsl library here)
-            response = es.search(index=search._index, body=search.to_dict(), **search._params)
-
-    demisto.debug(f"Search response: {response}")
-    total_dict, total_results = get_total_results(response)
-    search_context, meta_headers, hit_tables, hit_headers = results_to_context(
-        index, query_dsl or query, base_page, size, total_dict, response
+def get_prebuilt_rules_status(proxies):
+    kc = kibana_client()
+    response = kc.get_prebuilt_rules_status()
+    total_human_readable = "Fuck"
+    full_context = "Palo"
+    return CommandResults(
+        outputs_prefix="Kibana.Incident",
+        outputs_key_field="kibana",
+        outputs=response,
+        readable_output="test",
     )
-    search_human_readable = tableToMarkdown("Search Metadata:", search_context, meta_headers, removeNull=True)
-    hits_human_readable = tableToMarkdown("Hits:", hit_tables, hit_headers, removeNull=True)
-    total_human_readable = search_human_readable + "\n" + hits_human_readable
-    full_context = {
-        "Elasticsearch.Search(val.Query == obj.Query && val.Index == obj.Index "
-        "&& val.Server == obj.Server && val.Page == obj.Page && val.Size == obj.Size)": search_context
-    }
-
-    return_outputs(total_human_readable, full_context, response)
-
-
-def fetch_params_check():
-    """If is_fetch is ticked, this function checks that all the necessary parameters for the fetch are entered."""
-    str_error = []  # type:List
-    if (TIME_FIELD == "" or TIME_FIELD is None) and not RAW_QUERY:
-        str_error.append("Index time field is not configured.")
-
-    if not FETCH_QUERY:
-        str_error.append("Query by which to fetch incidents is not configured.")
-
-    if RAW_QUERY and FETCH_QUERY_PARM:
-        str_error.append("Both Query and Raw Query are configured. Please choose between Query or Raw Query.")
-
-    if len(str_error) > 0:
-        return_error("Got the following errors in test:\nFetches incidents is enabled.\n" + "\n".join(str_error))
-
-
-def test_query_to_fetch_incident_index(es):
-    """Test executing query in fetch index.
-
-    Notes:
-        if is_fetch it ticked, this function runs a general query to Elasticsearch just to make sure we get a response
-        from the FETCH_INDEX.
-
-    Args:
-        es(Elasticsearch): an Elasticsearch object to which we run the test.
-    """
-    try:
-        query = QueryString(query="*")
-        search = Search(using=es, index=FETCH_INDEX).query(query)[0:1]
-
-        if ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V9, ELASTICSEARCH_V8]:
-            response = search.execute().to_dict()
-
-        else:  # Elasticsearch v7 and below or OpenSearch
-            # maintain BC by using the ES client directly (avoid using the elasticsearch_dsl library here)
-            response = es.search(index=search._index, body=search.to_dict(), **search._params)
-
-        demisto.debug(f"Test query to fetch incident index response: {response}")
-        _, total_results = get_total_results(response)
-
-    except NotFoundError as e:
-        return_error("Fetch incidents test failed.\nError message: {}.".format(str(e).split(",")[2][2:-1]))
-
-
-def test_general_query(es):
-    """Test executing query to all available indexes.
-
-    Args:
-        es(Elasticsearch): an Elasticsearch object to which we run the test.
-    """
-    try:
-        query = QueryString(query="*")
-        search = Search(using=es, index="*").query(query)[0:1]
-
-        if ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V9, ELASTICSEARCH_V8, OPEN_SEARCH]:
-            response = search.execute().to_dict()
-
-        else:  # Elasticsearch v7 and below
-            # maintain BC by using the ES client directly (avoid using the elasticsearch_dsl library here)
-            response = es.search(index=search._index, body=search.to_dict(), **search._params)
-
-        demisto.debug(f"Test general query response: {response}")
-        get_total_results(response)
-
-    except NotFoundError as e:
-        return_error(
-            f"Failed executing general search command - please check the Server URL and port number "
-            f"and the supplied credentials.\nError message: {e!s}."
-        )
-
-
-def test_time_field_query(es):
-    """Test executing query of fetch time field.
-
-    Notes:
-        if is_fetch is ticked, this function checks if the entered TIME_FIELD returns results.
-
-    Args:
-        es(Elasticsearch): an Elasticsearch object to which we run the test.
-
-    Returns:
-        (dict).The results of the query if they are returned.
-    """
-    query = QueryString(query=TIME_FIELD + ":*")
-    search = Search(using=es, index=FETCH_INDEX).query(query)[0:1]
-
-    if ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V9, ELASTICSEARCH_V8, OPEN_SEARCH]:
-        response = search.execute().to_dict()
-
-    else:  # Elasticsearch v7 and below
-        # maintain BC by using the ES client directly (avoid using the elasticsearch_dsl library here)
-        response = es.search(index=search._index, body=search.to_dict(), **search._params)
-
-    demisto.debug(f"Test time field query response: {response}")
-    _, total_results = get_total_results(response)
-
-    if total_results == 0:
-        # failed in getting the TIME_FIELD
-        raise Exception(f"Fetch incidents test failed.\nDate field value incorrect [{TIME_FIELD}].")
-
-    else:
-        return response
-
-
-def test_fetch_query(es):
-    """Test executing fetch query.
-
-    Notes:
-        if is_fetch is ticked, this function checks if the FETCH_QUERY returns results.
-
-    Args:
-        es(Elasticsearch): an Elasticsearch object to which we run the test.
-
-    Returns:
-        (dict).The results of the query if they are returned.
-    """
-    query = QueryString(query=str(TIME_FIELD) + ":* AND " + FETCH_QUERY)
-    search = Search(using=es, index=FETCH_INDEX).query(query)[0:1]
-
-    if ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V9, ELASTICSEARCH_V8, OPEN_SEARCH]:
-        response = search.execute().to_dict()
-
-    else:  # Elasticsearch v7 and below
-        # maintain BC by using the ES client directly (avoid using the elasticsearch_dsl library here)
-        response = es.search(index=search._index, body=search.to_dict(), **search._params)
-
-    demisto.debug(f"Test fetch query response: {response}")
-    return response
-
-
-def test_timestamp_format(timestamp):
-    """if is_fetch is ticked and the TIME_METHOD chosen is a type of timestamp - this function checks that
-        the timestamp is in the correct format.
-
-    Args:
-        timestamp(sting): a timestamp string.
-    """
-    timestamp_in_seconds_len = len(str(int(time.time())))
-
-    if TIME_METHOD == "Timestamp-Seconds":
-        if not timestamp.isdigit():
-            return_error(f"The time field does not contain a standard timestamp.\nFetched: {timestamp}")
-
-        elif len(timestamp) > timestamp_in_seconds_len:
-            return_error(f"Fetched timestamp is not in seconds since epoch.\nFetched: {timestamp}")
-
-    elif TIME_METHOD == "Timestamp-Milliseconds":
-        if not timestamp.isdigit():
-            return_error(f"The timestamp fetched is not in milliseconds.\nFetched: {timestamp}")
-
-        elif len(timestamp) <= timestamp_in_seconds_len:
-            return_error(f"Fetched timestamp is not in milliseconds since epoch.\nFetched: {timestamp}")
-
-
-def test_connectivity_auth(proxies):
-    headers = {"Content-Type": "application/json"}
-    if API_KEY_ID:
-        headers["authorization"] = get_api_key_header_val(API_KEY)
-
-    try:
-        if USERNAME:
-            res = requests.get(SERVER, auth=(USERNAME, PASSWORD), verify=INSECURE, headers=headers)
-
-        else:
-            res = requests.get(SERVER, verify=INSECURE, headers=headers)
-
-        if res.status_code >= 400:
-            try:
-                res.raise_for_status()
-
-            except requests.exceptions.HTTPError as e:
-                if HTTP_ERRORS.get(res.status_code) is not None:
-                    # if it is a known http error - get the message form the preset messages
-                    return_error(f"Failed to connect. The following error occurred: {HTTP_ERRORS.get(res.status_code)}")
-
-                else:
-                    # if it is unknown error - get the message from the error itself
-                    return_error(f"Failed to connect. The following error occurred: {e}")
-
-        elif res.status_code == 200:
-            verify_es_server_version(res.json())
-
-    except requests.exceptions.RequestException as e:
-        return_error("Failed to connect. Check Server URL field and port number.\nError message: " + str(e))
-
-
-def verify_es_server_version(res):
-    """
-    Gets the requests.get raw response, extracts the elasticsearch server version,
-    and verifies that the client type parameter is configured accordingly.
-    Raises exceptions for server version miss configuration issues.
-
-    Args:
-        res(dict): requests.models.Response object including information regarding the elasticsearch server.
-    """
-    es_server_version = res.get("version", {}).get("number", "")
-    demisto.debug(f"Elasticsearch server version is: {es_server_version}")
-    if es_server_version:
-        major_version = es_server_version.split(".")[0]
-        if major_version:
-            if int(major_version) >= 8 and ELASTIC_SEARCH_CLIENT not in [ELASTICSEARCH_V9, ELASTICSEARCH_V8, OPEN_SEARCH]:
-                raise ValueError(
-                    f"Configuration Error: Your Elasticsearch server is version {es_server_version}. "
-                    f"Please ensure that the client type is set to {ELASTICSEARCH_V9}, {ELASTICSEARCH_V8} or {OPEN_SEARCH}. "
-                    f"For more information please see the integration documentation."
-                )
-            elif int(major_version) <= 7 and ELASTIC_SEARCH_CLIENT not in [OPEN_SEARCH, "Elasticsearch"]:
-                raise ValueError(
-                    f"Configuration Error: Your Elasticsearch server is version {es_server_version}. "
-                    f"Please ensure that the client type is set to Elasticsearch or {OPEN_SEARCH}. "
-                    f"For more information please see the integration documentation."
-                )
 
 
 def test_func(proxies):
     """
-    Tests API connectivity to the Elasticsearch server.
+    Tests API connectivity to Kibana.
     Tests the existence of all necessary fields for fetch.
 
     Due to load considerations, the test module doesn't check the validity of the fetch-incident - to test that the fetch works
     as excepted the user should run the es-integration-health-check command.
 
     """
-    test_connectivity_auth(proxies)
-    if demisto.params().get("isFetch"):
-        # check the existence of all necessary fields for fetch
-        fetch_params_check()
+    kc = kibana_client()
+    kc.get_prebuilt_rules_status()
     demisto.results("ok")
-
-
-def integration_health_check(proxies):
-    test_connectivity_auth(proxies)
-    # build general Elasticsearch class
-    es = elasticsearch_builder(proxies)
-
-    if demisto.params().get("isFetch"):
-        # check the existence of all necessary fields for fetch
-        fetch_params_check()
-
-        try:
-            # test if FETCH_INDEX exists
-            test_query_to_fetch_incident_index(es)
-
-            # test if TIME_FIELD in index exists
-            response = test_time_field_query(es)
-
-            # get the value in the time field
-            source = response.get("hits", {}).get("hits")[0].get("_source", {})
-            hit_date = str(get_value_by_dot_notation(source, str(TIME_FIELD)))
-
-            demisto.debug(f"Hit date received: {hit_date}")
-            # if not a timestamp test the conversion to datetime object
-            if "Timestamp" not in TIME_METHOD:
-                parse(str(hit_date))
-
-            # test timestamp format and conversion to date
-            else:
-                test_timestamp_format(hit_date)
-                timestamp_to_date(hit_date)
-
-        except ValueError as e:
-            return_error("Inserted time format is incorrect.\n" + str(e) + "\n" + TIME_FIELD + " fetched: " + hit_date)
-
-        # try to get response from FETCH_QUERY or RAW_QUERY
-        try:
-            if RAW_QUERY:
-                fetch_result = execute_raw_query(es, RAW_QUERY)
-            else:
-                fetch_result = test_fetch_query(es)
-
-            # validate that the response actually returned results and did not time out
-            if fetch_result and isinstance(fetch_result.get("timed_out"), bool):
-                if fetch_result.get("timed_out"):
-                    return_error(f"Elasticsearch fetching has timed out. Fetching response was:\n{str(fetch_result)}")
-                _, total_results = get_total_results(fetch_result)
-                if total_results == 0:
-                    demisto.info("Elasticsearch fetching test returned 0 hits, but this might be expected.")
-            else:
-                return_error(
-                    "Elasticsearch fetching was unsuccessful. Fetching returned the following invalid object:\n"
-                    + str(fetch_result)
-                )
-        except Exception as ex:
-            return_error(f"An exception has been thrown trying to test Elasticsearch fetching:\n{str(ex)}", error=str(ex))
-
-    else:
-        # check that we can reach any indexes in the supplied server URL
-        test_general_query(es)
-    return "Testing was successful."
-
-
-def incident_label_maker(source):
-    """Creates labels for the created incident.
-
-    Args:
-        source(dict): the _source fields of a hit.
-
-    Returns:
-        (list).The labels.
-    """
-    labels = []
-    for field, value in source.items():
-        encoded_value = value if isinstance(value, str) else json.dumps(value)
-        labels.append({"type": str(field), "value": encoded_value})
-
-    return labels
-
-
-def results_to_incidents_timestamp(response, last_fetch):
-    """Converts the current results into incidents.
-
-    Args:
-        response(dict): the raw search results from Elasticsearch.
-        last_fetch(num): the date or timestamp of the last fetch before this fetch
-        - this will hold the last date of the incident brought by this fetch.
-
-    Returns:
-        (list).The incidents.
-        (num).The date of the last incident brought by this fetch.
-    """
-    current_fetch = last_fetch
-    incidents = []
-    for hit in response.get("hits", {}).get("hits"):
-        source = hit.get("_source")
-        if source is not None:
-            time_field_value = get_value_by_dot_notation(source, str(TIME_FIELD))
-
-            if time_field_value is not None:
-                # if timestamp convert to iso format date and save the timestamp
-                hit_date = timestamp_to_date(str(time_field_value))
-                hit_timestamp = int(time_field_value)
-
-                if hit_timestamp > last_fetch:
-                    last_fetch = hit_timestamp
-
-                # avoid duplication due to weak time query
-                if hit_timestamp > current_fetch:
-                    inc = {
-                        "name": "Elasticsearch: Index: " + str(hit.get("_index")) + ", ID: " + str(hit.get("_id")),
-                        "rawJSON": json.dumps(hit),
-                        "occurred": hit_date.isoformat() + "Z",
-                    }
-                    if hit.get("_id"):
-                        inc["dbotMirrorId"] = hit.get("_id")
-
-                    if MAP_LABELS:
-                        inc["labels"] = incident_label_maker(hit.get("_source"))
-
-                    incidents.append(inc)
-
-    return incidents, last_fetch
-
-
-def results_to_incidents_datetime(response, last_fetch):
-    """Converts the current results into incidents.
-
-    Args:
-        response(dict): the raw search results from Elasticsearch.
-        last_fetch(datetime): the date or timestamp of the last fetch before this fetch or parameter default fetch time
-        - this will hold the last date of the incident brought by this fetch.
-
-    Returns:
-        (list).The incidents.
-        (datetime).The date of the last incident brought by this fetch.
-    """
-    last_fetch = dateparser.parse(last_fetch)
-    last_fetch_timestamp = int(last_fetch.timestamp() * 1000)  # type:ignore[union-attr]
-    current_fetch = last_fetch_timestamp
-    incidents = []
-
-    for hit in response.get("hits", {}).get("hits"):
-        source = hit.get("_source")
-        if source is not None:
-            time_field_value = get_value_by_dot_notation(source, str(TIME_FIELD))
-            if time_field_value is not None:
-                hit_date = parse(str(time_field_value))
-                hit_timestamp = int(hit_date.timestamp() * 1000)
-
-                if hit_timestamp > last_fetch_timestamp:
-                    last_fetch = hit_date
-                    last_fetch_timestamp = hit_timestamp
-
-                # avoid duplication due to weak time query
-                if hit_timestamp > current_fetch:
-                    inc = {
-                        "name": "Elasticsearch: Index: " + str(hit.get("_index")) + ", ID: " + str(hit.get("_id")),
-                        "rawJSON": json.dumps(hit),
-                        # parse function returns iso format sometimes as YYYY-MM-DDThh:mm:ss+00:00
-                        # and sometimes as YYYY-MM-DDThh:mm:ss
-                        # we want to return format: YYYY-MM-DDThh:mm:ssZ in our incidents
-                        "occurred": format_to_iso(hit_date.isoformat()),
-                    }
-                    if hit.get("_id"):
-                        inc["dbotMirrorId"] = hit.get("_id")
-
-                    if MAP_LABELS:
-                        inc["labels"] = incident_label_maker(hit.get("_source"))
-
-                    incidents.append(inc)
-                else:
-                    demisto.debug(
-                        f"Skipping hit ID: {hit.get('_id')} since {hit_timestamp=} is earlier than the {current_fetch=}"
-                    )
-
-    return incidents, last_fetch.isoformat()  # type:ignore[union-attr]
-
-
-def format_to_iso(date_string):
-    """Formatting function to make sure the date string is in YYYY-MM-DDThh:mm:ssZ format.
-
-    Args:
-        date_string(str): a date string in ISO format could be like: YYYY-MM-DDThh:mm:ss+00:00 or: YYYY-MM-DDThh:mm:ss
-
-    Returns:
-        str. A date string in the format: YYYY-MM-DDThh:mm:ssZ
-    """
-    if "." in date_string:
-        date_string = date_string.split(".")[0]
-
-    if len(date_string) > 19 and not date_string.endswith("Z"):
-        date_string = date_string[:-6]
-
-    if not date_string.endswith("Z"):
-        date_string = date_string + "Z"
-
-    return date_string
-
-
-def get_time_range(
-    last_fetch: Union[str, None] = None, time_range_start=FETCH_TIME, time_range_end=None, time_field=TIME_FIELD
-) -> Dict:
-    """
-    Creates the time range filter's dictionary based on the last fetch and given params.
-    The filter is using timestamps with the following logic:
-        start date (gt) - if this is the first fetch: use time_range_start param if provided, else use fetch time param.
-                          if this is not the fetch: use the last fetch provided
-        end date (lt) - use the given time range end param.
-        When the `time_method` parameter is set to `Simple-Date` in order to avoid being related to the field datetime format,
-            we add the format key to the query dict.
-    Args:
-
-        last_fetch (str): last fetch time stamp
-        time_range_start (str): start of time range
-        time_range_end (str): end of time range
-        time_field (str): The field on which the filter the results
-
-
-    Returns:
-        dictionary (Ex. {"range":{'gt': 1000 'lt': 1001}})
-    """
-    range_dict = {}
-    if not last_fetch and time_range_start:  # this is the first fetch
-        start_date = dateparser.parse(time_range_start)
-
-        start_time = convert_date_to_timestamp(start_date)
-    else:
-        start_time = last_fetch
-
-    demisto.debug(f"Time range start time: {start_time}")
-    if start_time:
-        range_dict["gt"] = start_time
-
-    if time_range_end:
-        end_date = dateparser.parse(time_range_end)
-        end_time = convert_date_to_timestamp(end_date)
-        range_dict["lt"] = end_time
-
-    if TIME_METHOD == "Simple-Date":
-        range_dict["format"] = ES_DEFAULT_DATETIME_FORMAT
-
-    if utc_offset := re.search(r"([+-]\d{2}:\d{2})$", time_range_start):
-        range_dict["time_zone"] = utc_offset.group(1)
-
-    demisto.debug(f"Time range dictionary created: {range_dict}")
-    return {"range": {time_field: range_dict}}
-
-
-def query_string_to_dict(raw_query) -> Dict:
-    """Parses a query_dsl string or bytearray into a Dict to make its fields accessible"""
-    try:
-        if not isinstance(raw_query, Dict):
-            raw_query = json.loads(raw_query)
-        if raw_query.get("query"):
-            demisto.debug("Query provided already has a query field. Sending as is.")
-            body = raw_query
-        else:
-            body = {"query": raw_query}
-    except (ValueError, TypeError) as e:
-        body = {"query": raw_query}
-        demisto.info(f"unable to convert raw query to dictionary, use it as a string\n{e}")
-    return body
-
-
-def execute_raw_query(es, raw_query, index=None, size=None, page=None):
-    body = query_string_to_dict(raw_query)
-
-    requested_index = index or FETCH_INDEX
-
-    # update parameters if given
-    if isinstance(size, int):
-        body["size"] = size
-    if isinstance(page, int):
-        body["from"] = page
-
-    search = Search(using=es, index=requested_index).update_from_dict(body)
-
-    if ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V9, ELASTICSEARCH_V8, OPEN_SEARCH]:
-        response = search.execute().to_dict()
-    else:  # Elasticsearch v7 and below
-        # maintain BC by using the ES client directly (avoid using the elasticsearch_dsl library here)
-        response = es.search(index=search._index, body=search.to_dict(), **search._params)
-
-    demisto.debug(f"Raw query response: {response}")
-    return response
-
-
-def fetch_incidents(proxies):
-    last_run = demisto.getLastRun()
-    last_fetch = last_run.get("time") or FETCH_TIME
-
-    es = elasticsearch_builder(proxies)
-    time_range_dict = get_time_range(time_range_start=last_fetch)
-
-    if RAW_QUERY:
-        response = execute_raw_query(es, RAW_QUERY)
-    else:
-        query = QueryString(query="(" + FETCH_QUERY + ") AND " + TIME_FIELD + ":*")
-        # Elastic search can use epoch timestamps (in milliseconds) as date representation regardless of date format.
-        search = Search(using=es, index=FETCH_INDEX).filter(time_range_dict)
-        search = search.sort({TIME_FIELD: {"order": "asc"}})[0:FETCH_SIZE].query(query)
-
-        if ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V9, ELASTICSEARCH_V8, OPEN_SEARCH]:
-            response = search.execute().to_dict()
-
-        else:  # Elasticsearch v7 and below
-            # maintain BC by using the ES client directly (avoid using the elasticsearch_dsl library here)
-            response = es.search(index=search._index, body=search.to_dict(), **search._params)
-
-    demisto.debug(f"Fetch incidents response: {response}")
-    _, total_results = get_total_results(response)
-
-    incidents = []  # type: List
-
-    if total_results > 0:
-        if "Timestamp" in TIME_METHOD:
-            incidents, last_fetch = results_to_incidents_timestamp(response, last_fetch)
-            demisto.setLastRun({"time": last_fetch})
-
-        else:
-            incidents, last_fetch = results_to_incidents_datetime(response, last_fetch or FETCH_TIME)
-            demisto.setLastRun({"time": str(last_fetch)})
-
-        demisto.info(f"Extracted {len(incidents)} incidents.")
-    demisto.incidents(incidents)
-
-
-def parse_subtree(my_map):
-    """
-    param: my_map - tree element for the schema
-    return: tree elements under each branch
-    """
-    # Recursive search in order to retrieve the elements under the branches in the schema
-    res = {}
-    for k in my_map:
-        if "properties" in my_map[k]:
-            res[k] = parse_subtree(my_map[k]["properties"])
-        else:
-            res[k] = "type: " + my_map[k].get("type", "")
-    return res
-
-
-def update_elastic_mapping(res_json, elastic_mapping, key):
-    """
-    A helper function for get_mapping_fields_command, updates the elastic mapping.
-    """
-    my_map = res_json[key]["mappings"]["properties"]
-    elastic_mapping[key] = {"_id": "doc_id", "_index": key}
-    elastic_mapping[key]["_source"] = parse_subtree(my_map)
-
-
-def get_mapping_fields_command():
-    """
-    Maps a schema from a given index
-    return: Elasticsearch schema structure
-    """
-    indexes = FETCH_INDEX.split(",")
-    elastic_mapping = {}  # type:ignore[var-annotated]
-    for index in indexes:
-        if index == "":
-            res = requests.get(SERVER + "/_mapping", auth=(USERNAME, PASSWORD), verify=INSECURE)
-        else:
-            res = requests.get(SERVER + "/" + index + "/_mapping", auth=(USERNAME, PASSWORD), verify=INSECURE)
-        res_json = res.json()
-
-        # To get mappings for all data streams and indices in a cluster,
-        # use _all or * for <target> or omit the <target> parameter - from Elastic API
-        if index in ["*", "_all", ""]:
-            for key in res_json:
-                if "mappings" in res_json[key] and "properties" in res_json[key]["mappings"]:
-                    update_elastic_mapping(res_json, elastic_mapping, key)
-
-        elif index.endswith("*"):
-            prefix_index = re.compile(index.rstrip("*"))
-            for key in res_json:
-                if prefix_index.match(key):
-                    update_elastic_mapping(res_json, elastic_mapping, key)
-
-        else:
-            update_elastic_mapping(res_json, elastic_mapping, index)
-
-    return elastic_mapping
-
-
-def build_eql_body(query, fields, size, tiebreaker_field, timestamp_field, event_category_field, filter):
-    body = {}
-    if query is not None:
-        body["query"] = query
-    if event_category_field is not None:
-        body["event_category_field"] = event_category_field
-    if fields is not None:
-        body["fields"] = fields
-    if filter is not None:
-        body["filter"] = filter
-    if size is not None:
-        body["size"] = size
-    if tiebreaker_field is not None:
-        body["tiebreaker_field"] = tiebreaker_field
-    if timestamp_field is not None:
-        body["timestamp_field"] = timestamp_field
-    return body
-
-
-def search_eql_command(args, proxies):
-    index = args.get("index")
-    query = args.get("query")
-    fields = args.get("fields")  # fields to display
-    size = int(args.get("size", "10"))
-    timestamp_field = args.get("timestamp_field")
-    event_category_field = args.get("event_category_field")
-    sort_tiebreaker = args.get("sort_tiebreaker")
-    query_filter = args.get("filter")
-
-    es = elasticsearch_builder(proxies)
-    body = build_eql_body(
-        query=query,
-        fields=fields,
-        size=size,
-        tiebreaker_field=sort_tiebreaker,
-        timestamp_field=timestamp_field,
-        event_category_field=event_category_field,
-        filter=query_filter,
-    )
-
-    demisto.debug(f"EQL search body: {body}")
-    response = es.eql.search(index=index, body=body)
-
-    total_dict, _ = get_total_results(response)
-    search_context, meta_headers, hit_tables, hit_headers = results_to_context(
-        index, query, 0, size, total_dict, response, event=True
-    )
-    search_human_readable = tableToMarkdown("Search Metadata:", search_context, meta_headers, removeNull=True)
-    hits_human_readable = tableToMarkdown("Hits:", hit_tables, hit_headers, removeNull=True)
-    total_human_readable = search_human_readable + "\n" + hits_human_readable
-
-    return CommandResults(readable_output=total_human_readable, outputs_prefix="Elasticsearch.Search", outputs=search_context)
-
-
-def search_esql_command(args, proxies):
-    query = args.get("query")
-    limit = args.get("limit")
-
-    es = elasticsearch_builder(proxies)
-
-    if limit:
-        query = {"query": query + f"| LIMIT {limit}"}
-    else:
-        query = {"query": query}
-
-    if ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V8, ELASTICSEARCH_V9]:
-        compatible_with = 8 if ELASTIC_SEARCH_CLIENT == ELASTICSEARCH_V8 else 9
-        headers = {
-            "Content-Type": f"application/vnd.elasticsearch+json; compatible-with={compatible_with}",
-            "Accept": f"application/vnd.elasticsearch+json; compatible-with={compatible_with}",
-        }
-    else:
-        return_error("ES|QL Search is only supported in Elasticsearch 8.11 and above.")
-        return None
-
-    demisto.debug(f"ES|QL search body: {query}")
-    res = es.perform_request(method="POST", path="/_query?format=json", headers=headers, body=query)
-
-    human_output_columns = [col["name"] for col in res["columns"]]
-    human_output_rows = res["values"]
-    human_output = []
-
-    for row in human_output_rows:
-        row_dict = {}
-        for i in range(len(human_output_columns)):
-            row_dict[human_output_columns[i]] = row[i]
-        human_output.append(row_dict)
-
-    search_human_readable = tableToMarkdown(
-        "Search query:", [{"Query": query.get("query"), "Total": str(len(human_output_rows))}], removeNull=True
-    )
-    hits_human_readable = tableToMarkdown("Results:", human_output, removeNull=True)
-    total_human_readable = search_human_readable + "\n" + hits_human_readable
-
-    return CommandResults(
-        readable_output=total_human_readable,
-        outputs_prefix="Elasticsearch.ESQLSearch",
-        outputs=human_output,
-        raw_response=res.body,
-    )
-
-
-def index_document(args, proxies):
-    """
-    Indexes a given document into an Elasticsearch index.
-    return: Result returned from elasticsearch lib
-    """
-    index = args.get("index_name")
-    doc = args.get("document")
-    doc_id = args.get("id", "")
-    es = elasticsearch_builder(proxies)
-
-    demisto.debug(f"Indexing document in index {index} with ID {doc_id}")
-    if ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V9, ELASTICSEARCH_V8]:
-        if doc_id:
-            response = es.index(index=index, id=doc_id, document=doc)  # pylint: disable=E1123,E1120,E1125
-        else:
-            response = es.index(index=index, document=doc)  # pylint: disable=E1123,E1120,E1125
-
-    else:  # Elasticsearch version v7 or below, OpenSearch (BC)
-        # In elasticsearch lib <8 'document' param is called 'body'
-        if doc_id:
-            response = es.index(index=index, id=doc_id, body=doc)
-        else:
-            response = es.index(index=index, body=doc)
-
-    demisto.debug(f"Index document response: {response}")
-    return response
-
-
-def index_document_command(args, proxies):
-    resp = index_document(args, proxies)
-    index_context = {
-        "id": resp.get("_id", ""),
-        "index": resp.get("_index", ""),
-        "version": resp.get("_version", ""),
-        "result": resp.get("result", ""),
-    }
-    human_readable = {
-        "ID": index_context.get("id"),
-        "Index name": index_context.get("index"),
-        "Version": index_context.get("version"),
-        "Result": index_context.get("result"),
-    }
-    headers = [str(k) for k in human_readable]
-    readable_output = tableToMarkdown(name="Indexed document", t=human_readable, removeNull=True, headers=headers)
-
-    if ELASTIC_SEARCH_CLIENT in [ELASTICSEARCH_V9, ELASTICSEARCH_V8]:
-        resp = resp.body
-
-    result = CommandResults(
-        readable_output=readable_output,
-        outputs_prefix="Elasticsearch.Index",
-        outputs=index_context,
-        raw_response=resp,
-        outputs_key_field="id",
-    )
-    return result
-
-
-def get_indices_statistics(client):
-    """
-    Returns raw statistics and information of all the Elasticsearch indices.
-    Args:
-        client : The Elasticsearch client
-
-    Returns:
-        dict: raw statistics and information of all the Elasticsearch indices.
-    """
-    stats = client.indices.stats()
-    raw_indices_data = stats.get("indices")
-
-    return raw_indices_data
-
-
-def get_indices_statistics_command(args, proxies):
-    """
-    Returns statistics and information of the Elasticsearch indices.
-
-    return: A List with Elasticsearch indices info and statistics.
-    API reference: https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-stats.html
-    """
-    limit = arg_to_number(args.get("limit", 50))
-    all_results = argToBoolean(args.get("all_results", False))
-    indices = []
-    es = elasticsearch_builder(proxies)
-
-    demisto.debug("Retrieving indices statistics")
-    # Fetch the statistics for all indices
-    raw_indices_data = get_indices_statistics(es)
-    for index, index_data in raw_indices_data.items():
-        index_stats = {
-            "Name": index,
-            "Status": index_data.get("status", ""),
-            "Health": index_data.get("health", ""),
-            "UUID": index_data.get("uuid", ""),
-            "Documents Count": index_data.get("total", {}).get("docs", {}).get("count", ""),
-            "Documents Deleted": index_data.get("total", {}).get("docs", {}).get("deleted", ""),
-        }
-        indices.append(index_stats)
-
-    if not all_results:
-        indices = indices[:limit]
-
-    readable_output = tableToMarkdown(
-        name="Indices Statistics:", t=indices, removeNull=True, headers=[str(k) for k in indices[0]]
-    )
-
-    result = CommandResults(
-        readable_output=readable_output,
-        outputs_prefix="Elasticsearch.IndexStatistics",
-        outputs=indices,
-        outputs_key_field="UUID",
-        raw_response=raw_indices_data,
-    )
-    return result
 
 
 def main():  # pragma: no cover
@@ -1215,22 +877,8 @@ def main():  # pragma: no cover
         LOG(f"command is {demisto.command()}")
         if demisto.command() == "test-module":
             test_func(proxies)
-        elif demisto.command() == "fetch-incidents":
-            fetch_incidents(proxies)
-        elif demisto.command() in ["search", "es-search"]:
-            search_command(proxies)
-        elif demisto.command() == "get-mapping-fields":
-            return_results(get_mapping_fields_command())
-        elif demisto.command() == "es-eql-search":
-            return_results(search_eql_command(args, proxies))
-        elif demisto.command() == "es-esql-search":
-            return_results(search_esql_command(args, proxies))
-        elif demisto.command() == "es-index":
-            return_results(index_document_command(args, proxies))
-        elif demisto.command() == "es-integration-health-check":
-            return_results(integration_health_check(proxies))
-        elif demisto.command() == "es-get-indices-statistics":
-            return_results(get_indices_statistics_command(args, proxies))
+        elif demisto.command() == "kb-get_prebuilt_rules_status":
+            return_results(get_prebuilt_rules_status(proxies))
 
     except Exception as e:
         if "The client noticed that the server is not a supported distribution of Elasticsearch" in str(e):

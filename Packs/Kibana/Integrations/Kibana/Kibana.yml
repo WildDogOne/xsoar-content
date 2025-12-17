@@ -1,6 +1,4 @@
 category: Analytics & SIEM
-sectionorder:
-  - Connect
 commonfields:
   id: Kibana
   version: -1
@@ -46,7 +44,7 @@ configuration:
     type: 8
     section: Collect
     required: false
-description: "Interact with Kibana"
+description: '[Enter a comprehensive, yet concise, description of what the integration does, what use cases it is designed for, etc.]'
 display: Kibana
 name: Kibana
 script:
@@ -96,13 +94,20 @@ script:
           defaultValue: "@timestamp"
           name: timestamp_field
       description: Get Prebuilt Rules Status
-      name: eskb-get_prebuilt_rules_status
+      name: kb-get_prebuilt_rules_status
       outputs:
         - contextPath: Kibana.Search.Results._index
           description: The index to which the document belongs.
           type: String
-autoUpdateDockerImage: false
-fromversion: 5.0.0
-defaultmapperin: Kibana - Incoming Mapper
+  isfetch: false
+  runonce: false
+  script: '-'
+  type: python
+  subtype: python3
+  dockerimage: demisto/python3:3.9.8.24399
+fromversion: 6.1.0
+marketplaces:
+  - xsoar
+  - marketplacev2
 tests:
-  - Kibana_test
+  - No tests (auto formatted)
