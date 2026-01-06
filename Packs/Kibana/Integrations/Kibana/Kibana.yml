@@ -85,6 +85,21 @@ script:
           name: dataview
           required: true
       name: kb-get_dataview
+    - description: Set Alert Status
+      arguments:
+        - description: Incident ID of the alert to update status of
+          name: alert_id
+          required: true
+          type: String
+        - description: Status to set the incident to
+          name: status
+          required: true
+          auto: PREDEFINED
+          defaultValue: ''
+          predefined:
+            - active
+            - closed
+      name: kb-set_alert_status
   isfetch: false
   runonce: false
   script: '-'

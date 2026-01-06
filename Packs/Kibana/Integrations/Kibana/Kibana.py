@@ -415,20 +415,16 @@ class kibana:
         url = self.base_url + f"/s/{space_id}/api/detection_engine/rules/prepackaged/_status"
         return self._get(url)
 
-    def update_prebuild_rules(self, rules: dict[str], space_id: str = "default") -> bool:
+    def get_rule(self, rule_id, space_id="default"):
         url = self.base_url + f"/s/{space_id}/api/detection_engine/rules"
-        return True
-
-    def get_rule(self, rule_id):
-        url = self.base_url + "/api/detection_engine/rules"
         params = {"id": rule_id}
         return self._get(url, params=params)
 
-    def get_all_rules(self, title: str = None):
+    def get_all_rules(self, title: str = None, space_id="default"):
         page = 1
         output_data = []
         while True:
-            url = self.base_url + f"/api/detection_engine/rules/_find?per_page=100&page={page}"
+            url = self.base_url + f"/s/{space_id}/api/detection_engine/rules/_find?per_page=100&page={page}"
             x = self._get(url)
             if len(x["data"]) > 0:
                 output_data += x["data"]
@@ -470,22 +466,6 @@ class kibana:
             return self._post(url, payload)
         else:
             return_error("No Rules ids provided")
-
-    def enable_prebuild_ml_job(self, job_name=None):
-        url = self.base_url + "/api/ml/jobs/force_start_datafeeds"
-        if job_name:
-            payload = {"datafeedIds": [f"datafeed-{job_name}"]}
-            return self._post(url, payload)
-        else:
-            return_error("No Job Name provided")
-
-    def disable_prebuild_ml_job(self, job_name=None):
-        url = self.base_url + "/api/ml/jobs/stop_datafeeds"
-        if job_name:
-            payload = {"datafeedIds": [f"datafeed-{job_name}"]}
-            return self._post(url, payload)
-        else:
-            return_error("No Job Name provided")
 
     def get_exception_container(self, container_name=None):
         url = self.base_url + "/api/exception_lists/_find"
@@ -540,15 +520,19 @@ class kibana:
             else:
                 return_error("No Container found")
 
-    def post_close_alert(self, signal_ids):
-        url = self.base_url + "/api/detection_engine/signals/status"
-        payload = {"signal_ids": signal_ids, "status": "closed"}
+    def post_alert_status(self, signal_ids: str, status: str, space_id: str = "default"):
+        # closed / active
+        url = self.base_url + f"/s/{space_id}/api/detection_engine/signals/status"
+        payload = {"signal_ids": signal_ids, "status": status}
         self._post(url, payload)
 
     def post_ack_alert(self, signal_ids):
         url = self.base_url + "/api/detection_engine/signals/status"
         payload = {"signal_ids": signal_ids, "status": "in-progress"}
         self._post(url, payload)
+
+    def get_alert(self, alert_id: str, space_id=None):
+        url = self.base_url + "/api/detection_engine/alerts/" + alert_id
 
 
 import urllib3
